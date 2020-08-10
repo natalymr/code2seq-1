@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 from nltk import bleu_score
 
@@ -24,21 +26,25 @@ class Vocab(object):
             self.word2id.setdefault(word, _id)
             self.id2word[_id] = word 
 
-def sentence_to_ids(vocab, sentence):
+
+def sentence_to_ids(vocab, sentence) -> List[int]:
     ids = [vocab.word2id.get(word, UNK) for word in sentence]
     ids += [EOS]
     return ids
 
+
 def ids_to_sentence(vocab, ids):
     return [vocab.id2word[_id] for _id in ids]
+
 
 def trim_eos(ids):
     if EOS in ids:
         return ids[:ids.index(EOS)]
     else:
         return ids
-    
-def calculate_results_set(refs, preds):
+
+
+def calculate_results_set(refs, preds, target_vocab=None):
     #calc precision, recall and F1
     #same as https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L239
     
@@ -47,6 +53,9 @@ def calculate_results_set(refs, preds):
     
     filterd_refs = [list(set(ref)) for ref in filterd_refs]
     filterd_preds = [list(set(pred)) for pred in filterd_preds]
+    if target_vocab is not None:
+        print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs]}')
+        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
     
     true_positive, false_positive, false_negative = 0, 0, 0
 
@@ -79,14 +88,18 @@ def calculate_results_set(refs, preds):
         f1 = 0
     
     return precision, recall, f1
-    
-def calculate_results(refs, preds):
+
+
+def calculate_results(refs, preds, target_vocab=None):
     #calc precision, recall and F1
     #same as https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L239
     
     filterd_refs = [ref[:ref.index(EOS)] for ref in refs]
     filterd_preds = [pred[:pred.index(EOS)] if EOS in pred else pred for pred in preds]
-    
+    if target_vocab is not None:
+        print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs]}')
+        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
+
     true_positive, false_positive, false_negative = 0, 0, 0
 
     for filterd_pred, filterd_ref in zip(filterd_preds, filterd_refs):
@@ -122,6 +135,7 @@ def calculate_results(refs, preds):
         f1 = 0
     
     return precision, recall, f1
+
 
 class EarlyStopping(object):
     def __init__(self, filename = None, patience=3, warm_up=0, verbose=False):

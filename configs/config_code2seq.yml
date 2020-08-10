@@ -1,14 +1,14 @@
 data:
-  home: ../data
-  dict: /java-small/java-small.dict.c2s
-  train: /java-small/train
-  valid: /java-small/val
-  test: /java-small/test
+  home: /Users/natalia.murycheva/PycharmProjects/gitCommitMessageCollector/commit2seq/code2seq/data/java-small
+  dict: /java-small.dict.c2s
+  train: /train
+  valid: /train
+  test: /train
 
 
 training:
-  batch_size: 256
-  num_epochs: 50
+  batch_size: 2
+  num_epochs: 30
   lr: 0.001
   teacher_forcing_rate: 0.4
   nesterov: True
@@ -17,13 +17,13 @@ training:
   decay_ratio: 0.95
   save_name: /model.pth
   warm_up: 1
-  patience: 2
+  patience: 30
   
   
 model:
   token_size: 128
   hidden_size: 64
-  num_layers: 1
+  num_layers: 2
   bidirectional: True
   rnn_dropout: 0.5
   embeddings_dropout: 0.3

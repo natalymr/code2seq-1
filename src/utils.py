@@ -44,6 +44,18 @@ def trim_eos(ids):
         return ids
 
 
+def get_nltk_bleu_score_for_corpora(refs: List[List[str]], preds: List[List[str]]) -> float:
+    import nltk
+    total_bleu = 0.
+    for ref, pred in zip(refs, preds):
+        if len(pred) == 0:
+            continue
+        total_bleu += nltk.translate.bleu_score.sentence_bleu([ref], pred,
+                                                              auto_reweigh=True,
+                                                              smoothing_function=nltk.translate.bleu_score.SmoothingFunction().method7) * 100
+    return total_bleu / len(refs)
+
+
 def calculate_results_set(refs, preds, target_vocab=None):
     #calc precision, recall and F1
     #same as https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L239
@@ -54,6 +66,9 @@ def calculate_results_set(refs, preds, target_vocab=None):
     filterd_refs = [list(set(ref)) for ref in filterd_refs]
     filterd_preds = [list(set(pred)) for pred in filterd_preds]
     if target_vocab is not None:
+        refs_in_words = [[target_vocab.id2word[r] for r in ref] for ref in refs]
+        preds_in_words = [[target_vocab.id2word[p] for p in pred] for pred in preds]
+        print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
         print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs]}')
         print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
     
@@ -88,6 +103,7 @@ def calculate_results_set(refs, preds, target_vocab=None):
         f1 = 0
     
     return precision, recall, f1
+
 
 
 def calculate_results(refs, preds, target_vocab=None):

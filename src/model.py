@@ -201,7 +201,6 @@ class EncoderDecoder_with_Attention(nn.Module):
 
         # e_out : (batch * k, hidden_size)
         e_out = torch.cat(encoder_output_bag, dim=0)
-        print(e_out.shape)
 
         # e_out : (batch * k(i), hidden_size(j))
         # self.W_a  : [hidden_size(j), hidden_size(k)]

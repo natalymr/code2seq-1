@@ -73,8 +73,8 @@ def calculate_results_set(refs, preds, target_vocab=None):
         refs_in_words = [[target_vocab.id2word[r] for r in ref if r not in special_tokens] for ref in refs]
         preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
         print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
-        print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs]}')
-        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
+        print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs[:10]]}')
+        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds[:10]]}')
     
     true_positive, false_positive, false_negative = 0, 0, 0
 
@@ -120,8 +120,8 @@ def calculate_results(refs, preds, target_vocab=None):
         refs_in_words = [[target_vocab.id2word[r] for r in ref if r not in special_tokens] for ref in refs]
         preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
         print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
-        print(f'Target = {[[target_vocab.id2word[r] for r in ref ] for ref in refs]}')
-        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
+        print(f'Target = {[[target_vocab.id2word[r] for r in ref ] for ref in refs[:10]]}')
+        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds[:10]]}')
 
     true_positive, false_positive, false_negative = 0, 0, 0
 

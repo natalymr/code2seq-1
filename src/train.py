@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results
 from commit2seq.code2seq.src.common_vars import PAD, BOS, EOS, UNK, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN, UNK_TOKEN, device
-from commit2seq.code2seq.src.model import EncoderDecoder_with_Attention
+from commit2seq.code2seq.src.model import EncoderDecoderWithAttention
 from commit2seq.code2seq.src.DataLoader import DataLoader
 
 
@@ -127,7 +127,7 @@ if __name__ == '__main__':
         'device': device
     }
 
-    model = EncoderDecoder_with_Attention(**model_args).to(device)
+    model = EncoderDecoderWithAttention(**model_args).to(device)
 
     # optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov = nesterov)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -215,8 +215,8 @@ if __name__ == '__main__':
         valid_loss = np.sum(valid_loss) / valid_dataloader.num_examples
 
         # F1 etc
-        train_precision, train_recall, train_f1 = calculate_results_set(train_refs, train_hyps)
-        valid_precision, valid_recall, valid_f1 = calculate_results_set(valid_refs, valid_hyps)
+        train_precision, train_recall, train_f1 = calculate_results_set(train_refs, train_hyps, vocab_target)
+        valid_precision, valid_recall, valid_f1 = calculate_results_set(valid_refs, valid_hyps, vocab_target)
 
         early_stopping(valid_f1, model, epoch)
         if early_stopping.early_stop:
@@ -230,7 +230,7 @@ if __name__ == '__main__':
 
         scheduler.step()
     # ==================================================================================================================
-    model = EncoderDecoder_with_Attention(**model_args).to(device)
+    model = EncoderDecoderWithAttention(**model_args).to(device)
 
     fname = exp_dir + save_name
     ckpt = torch.load(fname)
@@ -261,8 +261,8 @@ if __name__ == '__main__':
         hyp_list.append(pred)
     print('Tested model : ' + fname)
 
-    test_precision, test_recall, test_f1 = calculate_results(refs_list, hyp_list)
+    test_precision, test_recall, test_f1 = calculate_results(refs_list, hyp_list, vocab_target)
     print('Test : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))
 
-    test_precision, test_recall, test_f1 = calculate_results_set(refs_list, hyp_list)
+    test_precision, test_recall, test_f1 = calculate_results_set(refs_list, hyp_list, vocab_target)
     print('Test(set) : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))

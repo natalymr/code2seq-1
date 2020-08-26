@@ -3,7 +3,7 @@ import numpy as np
 from torch import nn, einsum
 from commit2seq.code2seq.src.common_vars import PAD, BOS
 
-from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence
 import torch.nn.functional as F
 
 
@@ -11,12 +11,14 @@ class Encoder(nn.Module):
     def __init__(self, input_size_subtoken, input_size_node, token_size, hidden_size, bidirectional=True, num_layers=2,
                  rnn_dropout=0.5, embeddings_dropout=0.25):
         """
-        input_size_subtoken : # of unique subtoken
-        input_size_node : # of unique node symbol
-        token_size : embedded token size
-        hidden_size : size of initial state of decoder
-        rnn_dropout = 0.5 : rnn drop out ratio
-        embeddings_dropout = 0.25 : dropout ratio for context vector
+        :param input_size_subtoken: # of unique subtoken
+        :param input_size_node: # of unique node symbol
+        :param token_size: embedded token size
+        :param hidden_size: size of initial state of decoder
+        :param bidirectional: boolean, if True, becomes a bidirectional
+        :param num_layers: # of recurrent layers
+        :param rnn_dropout: 0.5 : rnn drop out ratio
+        :param embeddings_dropout: 0.25 : dropout ratio for context vector
         """
 
         super(Encoder, self).__init__()
@@ -136,13 +138,13 @@ class Decoder(nn.Module):
         return output, hidden
 
 
-class EncoderDecoder_with_Attention(nn.Module):
+class EncoderDecoderWithAttention(nn.Module):
     """Conbine Encoder and Decoder"""
 
     def __init__(self, input_size_subtoken, input_size_node, token_size, output_size, hidden_size, device,
                  bidirectional=True, num_layers=2, rnn_dropout=0.5, embeddings_dropout=0.25):
 
-        super(EncoderDecoder_with_Attention, self).__init__()
+        super(EncoderDecoderWithAttention, self).__init__()
         self.device= device
         self.encoder = Encoder(input_size_subtoken, input_size_node, token_size, hidden_size,
                                bidirectional=bidirectional, num_layers=num_layers, rnn_dropout=rnn_dropout,

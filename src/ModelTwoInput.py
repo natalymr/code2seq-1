@@ -1,200 +1,89 @@
 import torch
-import numpy as np
 from torch import nn, einsum
-from commit2seq.code2seq.src.common_vars import PAD, BOS
+from commit2seq.code2seq.src.common_vars import BOS
+from commit2seq.code2seq.src.model import Encoder, Decoder
 
-from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 import torch.nn.functional as F
 
 
-class Encoder(nn.Module):
-    def __init__(self, input_size_subtoken, input_size_node, token_size, hidden_size, bidirectional=True, num_layers=2,
-                 rnn_dropout=0.5, embeddings_dropout=0.25):
-        """
-        :param input_size_subtoken: # of unique subtoken
-        :param input_size_node: # of unique node symbol
-        :param token_size: embedded token size
-        :param hidden_size: size of initial state of decoder
-        :param bidirectional: boolean, if True, becomes a bidirectional
-        :param num_layers: # of recurrent layers
-        :param rnn_dropout: 0.5 : rnn drop out ratio
-        :param embeddings_dropout: 0.25 : dropout ratio for context vector
-        """
-
-        super(Encoder, self).__init__()
-        self.hidden_size = hidden_size
-        self.token_size = token_size
-
-        self.embedding_subtoken = nn.Embedding(input_size_subtoken, self.token_size, padding_idx=PAD)
-        self.embedding_node = nn.Embedding(input_size_node, self.token_size, padding_idx=PAD)
-
-        self.lstm = nn.LSTM(self.token_size, self.token_size, num_layers=num_layers, bidirectional=bidirectional,
-                            dropout=rnn_dropout)
-        self.out = nn.Linear(self.token_size * 4, hidden_size)
-
-        self.dropout = nn.Dropout(embeddings_dropout)
-        self.num_directions = 2 if bidirectional else 1
-        self.num_layers = num_layers
-
-    def forward(self, batch_S, batch_N, batch_E, lengths_k, index_N, lengths_N, hidden=None):
-        """
-        :param batch_S: (B * k, l) start terminals' subtoken of each ast path
-                        (BS * #_of_paths, max_count_of_subtokens)
-        :param batch_N: (l, B * k) nonterminals' nodes of each ast path
-                        (max_count_of_nodes_in_paths, BS * #_of_paths)
-        :param batch_E: (B * k, l) end terminals' subtoken of each ast path
-                        (BS * #_of_paths, max_count_of_subtokens)
-        :param lengths_k: length of k in each example
-        :param index_N: index for unsorting,
-        :param lengths_N:
-        :param hidden:
-        :return:
-        """
-
-        # BS * #_of_paths
-        bk_size = batch_N.shape[1]
-
-        # (B * k, l, d)
-        encode_S = self.embedding_subtoken(batch_S)
-        encode_E = self.embedding_subtoken(batch_E)
-
-        # encode_S (B * k, d) token_representation of each ast path
-        encode_S = encode_S.sum(1)
-        encode_E = encode_E.sum(1)
-
-        """
-        LSTM Outputs: output, (h_n, c_n)
-        output (seq_len, batch, num_directions * hidden_size)
-        h_n    (num_layers * num_directions, batch, hidden_size) : tensor containing the hidden state for t = seq_len.
-        c_n    (num_layers * num_directions, batch, hidden_size)
-        """
-
-        # nodes_embedding :(l, B*k, d)
-        nodes_embedding = self.embedding_node(batch_N)
-        packed = pack_padded_sequence(nodes_embedding, lengths_N)
-        output, (hidden, cell) = self.lstm(packed, hidden)
-        # output, _ = pad_packed_sequence(output)
-
-        # hidden (num_layers * num_directions, batch, hidden_size)
-        # only last layer, (num_directions, batch, hidden_size)
-        hidden = hidden[-self.num_directions:, :, :]
-
-        # -> (Bk, num_directions, hidden_size)
-        hidden = hidden.transpose(0, 1)
-
-        # -> (Bk, 1, hidden_size * num_directions)
-        hidden = hidden.contiguous().view(bk_size, 1, -1)
-
-        # encode_N (Bk, hidden_size * num_directions)
-        encode_N = hidden.squeeze(1)
-
-        # encode_SNE  : (B*k, hidden_size * num_directions + 2)
-        encode_SNE = torch.cat([encode_N, encode_S, encode_E], dim=1)
-
-        # encode_SNE  : (B*k, d)
-        encode_SNE = self.out(encode_SNE)
-
-        # unsort as example
-        # index = torch.tensor(index_N, dtype=torch.long, device=device)
-        # encode_SNE = torch.index_select(encode_SNE, dim=0, index=index)
-        index = np.argsort(index_N)
-        encode_SNE = encode_SNE[[index]]
-
-        # as is in  https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L511
-        encode_SNE = self.dropout(encode_SNE)
-
-        # output_bag  : [ B, (k, d) ]  эмбеддинг всех путей
-        output_bag = torch.split(encode_SNE, lengths_k, dim=0)
-
-        # hidden_0  : (1, B, d)
-        # for decoder initial state
-        hidden_0 = [ob.mean(0).unsqueeze(dim=0) for ob in output_bag]
-        hidden_0 = torch.cat(hidden_0, dim=0).unsqueeze(dim=0)
-
-        return output_bag, hidden_0
-
-
-class Decoder(nn.Module):
-    def __init__(self, hidden_size, output_size, rnn_dropout):
-        """
-        hidden_size : decoder unit size,
-        output_size : decoder output size (vocab_size),
-        rnn_dropout : dropout ratio for rnn
-        """
-
-        super(Decoder, self).__init__()
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-
-        self.embedding = nn.Embedding(output_size, hidden_size, padding_idx=PAD)
-        self.gru = nn.GRU(hidden_size, hidden_size, dropout=rnn_dropout)
-        self.out = nn.Linear(hidden_size * 2, output_size)
-
-    def forward(self, seqs, hidden, attn):
-        embedding = self.embedding(seqs)
-        _, hidden = self.gru(embedding, hidden)
-
-        output = torch.cat((hidden, attn), 2)
-        output = self.out(output)
-
-        return output, hidden
-
-
-class EncoderDecoder_with_Attention(nn.Module):
+class Commit2Seq(nn.Module):
     """Conbine Encoder and Decoder"""
 
     def __init__(self, input_size_subtoken, input_size_node, token_size, output_size, hidden_size, device,
                  bidirectional=True, num_layers=2, rnn_dropout=0.5, embeddings_dropout=0.25):
 
-        super(EncoderDecoder_with_Attention, self).__init__()
-        self.device= device
+        super(Commit2Seq, self).__init__()
+        self.device = device
         self.encoder = Encoder(input_size_subtoken, input_size_node, token_size, hidden_size,
                                bidirectional=bidirectional, num_layers=num_layers, rnn_dropout=rnn_dropout,
                                embeddings_dropout=embeddings_dropout)
         self.decoder = Decoder(hidden_size, output_size, rnn_dropout)
 
-        self.W_a = torch.rand((hidden_size, hidden_size), dtype=torch.float, device=device, requires_grad=True)
+        self.W_a_del = torch.rand((hidden_size, hidden_size), dtype=torch.float, device=device, requires_grad=True)
+        self.W_a_add = torch.rand((hidden_size, hidden_size), dtype=torch.float, device=device, requires_grad=True)
+        self.W_a_3 = torch.rand((hidden_size, hidden_size), dtype=torch.float, device=device, requires_grad=True)
 
-        nn.init.xavier_uniform_(self.W_a)
+        nn.init.xavier_uniform_(self.W_a_del)
+        nn.init.xavier_uniform_(self.W_a_add)
+        nn.init.xavier_uniform_(self.W_a_3)
 
-    def forward(self, batch_S, batch_N, batch_E, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S, max_length_N,
-                max_length_E, max_length_Y, lengths_k, index_N, terget_max_length, batch_Y=None,
-                use_teacher_forcing=False):
+    def forward(self, left_leaves_del, nodes_del, right_leaves_del, nodes_del_len, lengths_k_del, perm_index_del,
+                left_leaves_add, nodes_add, right_leaves_add, nodes_add_len, lengths_k_add, perm_index_add,
+                target_max_length,
+                target=None, use_teacher_forcing=False):
 
-        # Encoder
-        encoder_output_bag, encoder_hidden = \
-            self.encoder(batch_S, batch_N, batch_E, lengths_k, index_N, lengths_N)
+        # Encoder del
+        encoder_output_bag_del, encoder_hidden_del = \
+            self.encoder(left_leaves_del, nodes_del, right_leaves_del, lengths_k_del, perm_index_del, nodes_del_len)
 
-        _batch_size = len(encoder_output_bag)
-        decoder_hidden = encoder_hidden
+        # Encoder del
+        encoder_output_bag_add, encoder_hidden_add = \
+            self.encoder(left_leaves_add, nodes_add, right_leaves_add, lengths_k_add, perm_index_add, nodes_add_len)
+
+        _batch_size = len(encoder_output_bag_add)
+        decoder_hidden = (encoder_hidden_del + encoder_hidden_add) / 2
 
         # make initial input for decoder
         decoder_input = torch.tensor([BOS] * _batch_size, dtype=torch.long, device=self.device)
         decoder_input = decoder_input.unsqueeze(0)  # (1, batch_size)
 
         # output holder
-        decoder_outputs = torch.zeros(terget_max_length, _batch_size, self.decoder.output_size, device=self.device)
+        decoder_outputs = torch.zeros(target_max_length, _batch_size, self.decoder.output_size, device=self.device)
+
+        def concat_del_add(context_del, context_add):
+            def squeeze_0_dim(x):
+                return x.squeeze(dim=0)
+
+            ct_del_splitted = tuple(map(squeeze_0_dim, torch.split(context_del, 1, dim=1)))
+            ct_add_splitted = tuple(map(squeeze_0_dim, torch.split(context_add, 1, dim=1)))
+
+            result = ()
+            for del_, add_ in zip(ct_del_splitted, ct_add_splitted):
+                result = result + (torch.cat((del_, add_), 0), )
+            return result
 
         # print('=' * 20)
-        for t in range(terget_max_length):
+        for t in range(target_max_length):
             # ct
-            ct = self.attention(encoder_output_bag, decoder_hidden, lengths_k)
+            ct_del = self.attention(encoder_output_bag_del, decoder_hidden, lengths_k_del, self.W_a_del)
+            ct_add = self.attention(encoder_output_bag_add, decoder_hidden, lengths_k_add, self.W_a_add)
+
+            ct = self.attention(concat_del_add(ct_del, ct_add), decoder_hidden, [2] * _batch_size, self.W_a_3)
+            # ct = ct_del + ct_add
 
             decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden, ct)
-
-            # print(decoder_output.max(-1)[1])
 
             decoder_outputs[t] = decoder_output
 
             # Teacher Forcing
-            if use_teacher_forcing and batch_Y is not None:
-                decoder_input = batch_Y[t].unsqueeze(0)
+            if use_teacher_forcing and target is not None:
+                decoder_input = target[t].unsqueeze(0)
             else:
                 decoder_input = decoder_output.max(-1)[1]
 
         return decoder_outputs
 
-    def attention(self, encoder_output_bag, hidden, lengths_k):
+    def attention(self, encoder_output_bag, hidden, lengths_k, attentions_weights):
 
         """
         encoder_output_bag : (batch, k, hidden_size) bag of embedded ast path
@@ -208,7 +97,7 @@ class EncoderDecoder_with_Attention(nn.Module):
         # e_out : (batch * k(i), hidden_size(j))
         # self.W_a  : [hidden_size(j), hidden_size(k)]
         # ha -> : [batch * k(i), hidden_size(k)]
-        ha = einsum('ij,jk->ik', e_out, self.W_a)
+        ha = einsum('ij,jk->ik', e_out, attentions_weights)
 
         # ha -> : [batch, (k, hidden_size)]
         ha = torch.split(ha, lengths_k, dim=0)

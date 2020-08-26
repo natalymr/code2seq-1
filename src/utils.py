@@ -8,6 +8,10 @@ BOS = 1
 EOS = 2
 UNK = 3
 
+
+special_tokens = [PAD, BOS, EOS, UNK]
+
+
 class Vocab(object):
     def __init__(self, word2id={}):
         
@@ -66,8 +70,8 @@ def calculate_results_set(refs, preds, target_vocab=None):
     filterd_refs = [list(set(ref)) for ref in filterd_refs]
     filterd_preds = [list(set(pred)) for pred in filterd_preds]
     if target_vocab is not None:
-        refs_in_words = [[target_vocab.id2word[r] for r in ref] for ref in refs]
-        preds_in_words = [[target_vocab.id2word[p] for p in pred] for pred in preds]
+        refs_in_words = [[target_vocab.id2word[r] for r in ref if r not in special_tokens] for ref in refs]
+        preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
         print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
         print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs]}')
         print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
@@ -113,7 +117,10 @@ def calculate_results(refs, preds, target_vocab=None):
     filterd_refs = [ref[:ref.index(EOS)] for ref in refs]
     filterd_preds = [pred[:pred.index(EOS)] if EOS in pred else pred for pred in preds]
     if target_vocab is not None:
-        print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs]}')
+        refs_in_words = [[target_vocab.id2word[r] for r in ref if r not in special_tokens] for ref in refs]
+        preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
+        print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
+        print(f'Target = {[[target_vocab.id2word[r] for r in ref ] for ref in refs]}')
         print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds]}')
 
     true_positive, false_positive, false_negative = 0, 0, 0
@@ -195,10 +202,12 @@ class EarlyStopping(object):
         if self.verbose:
             print('Model saved...')
         
+
 def pad_seq(seq, max_length):
     # pad tail of sequence to extend sequence length up to max_length
     res = seq + [PAD for i in range(max_length - len(seq))]
     return res 
+
 
 def calc_bleu(refs, hyps):
     _refs = [[ref[:ref.index(EOS)]] for ref in refs]

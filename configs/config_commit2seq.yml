@@ -1,0 +1,36 @@
+data:
+  home: /Users/natalia.murycheva/PycharmProjects/gitCommitMessageCollector/commit2seq/code2seq/data/java-small
+  dict: /java-small.dict.c2s
+  train: /train_two_input
+  valid: /train_two_input
+  test: /train_two_input
+
+
+training:
+  batch_size: 2
+  num_epochs: 30
+  lr: 0.001
+  teacher_forcing_rate: 0.4
+  nesterov: True
+  weight_decay: 0.01
+  momentum: 0.95
+  decay_ratio: 0.95
+  save_name: /model.pth
+  warm_up: 1
+  patience: 30
+  
+  
+model:
+  token_size: 128
+  hidden_size: 64
+  num_layers: 2
+  bidirectional: True
+  rnn_dropout: 0.5
+  embeddings_dropout: 0.3
+  num_k : 200
+
+etc:
+  info_prefix: code2seq
+  slack_url_path: ../slack/slack_url.yml
+
+comment: code2seq

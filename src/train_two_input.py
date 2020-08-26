@@ -13,25 +13,28 @@ from tqdm import tqdm
 
 from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results
 from commit2seq.code2seq.src.common_vars import PAD, BOS, EOS, UNK, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN, UNK_TOKEN, device
-from commit2seq.code2seq.src.model import EncoderDecoder_with_Attention
-from commit2seq.code2seq.src.DataLoader import DataLoader
+from commit2seq.code2seq.src.ModelTwoInput import Commit2Seq
+from commit2seq.code2seq.src.DataLoaderTwoInput import DataLoaderTwoInput
 
 
 def masked_cross_entropy(logits, target):
     return mce(logits.view(-1, logits.size(-1)), target.view(-1))
 
 
-def compute_loss(batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S,
-                 max_length_N, max_length_E, max_length_Y, lengths_k, index_N, model, optimizer=None,
-                 is_train=True):
+def compute_loss(batch_S_del, batch_N_del, batch_E_del,
+                 lengths_N_del, lengths_k_del, index_N_del,
+                 batch_S_add, batch_N_add, batch_E_add,
+                 lengths_N_add, lengths_k_add, index_N_add,
+                 batch_Y, model,
+                 optimizer=None, is_train=True):
     model.train(is_train)
 
     use_teacher_forcing = is_train and (random.random() < teacher_forcing_rate)
 
     target_max_length = batch_Y.size(0)
-    pred_Y = model(batch_S, batch_N, batch_E, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S,
-                   max_length_N, max_length_E, max_length_Y, lengths_k, index_N, target_max_length, batch_Y,
-                   use_teacher_forcing)
+    pred_Y = model(batch_S_del, batch_N_del, batch_E_del, lengths_N_del, lengths_k_del, index_N_del,
+                   batch_S_add, batch_N_add, batch_E_add, lengths_N_add, lengths_k_add, index_N_add,
+                   target_max_length, batch_Y, use_teacher_forcing)
 
     loss = masked_cross_entropy(pred_Y.contiguous(), batch_Y.contiguous())
 
@@ -45,8 +48,9 @@ def compute_loss(batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengt
 
     return loss.item(), batch_Y, pred
 
+
 if __name__ == '__main__':
-    config_file = '../configs/config_code2seq.yml'
+    config_file = '../configs/config_commit2seq.yml'
 
     config = yaml.load(open(config_file), Loader=yaml.FullLoader)
 
@@ -129,12 +133,12 @@ if __name__ == '__main__':
     mce = nn.CrossEntropyLoss(size_average=False, ignore_index=PAD)
     # ==================================================================================================================
     batch_time = False
-    train_dataloader = DataLoader(TRAIN_DIR, batch_size, num_k,
-                                  vocab_subtoken, vocab_nodes, vocab_target, device=device,
-                                  batch_time=batch_time, shuffle=True)
-    valid_dataloader = DataLoader(VALID_DIR, batch_size, num_k,
-                                  vocab_subtoken, vocab_nodes, vocab_target, device=device,
-                                  shuffle=False)
+    train_dataloader = DataLoaderTwoInput(TRAIN_DIR, batch_size, num_k,
+                                          vocab_subtoken, vocab_nodes, vocab_target, device=device,
+                                          batch_time=batch_time, shuffle=True)
+    valid_dataloader = DataLoaderTwoInput(VALID_DIR, batch_size, num_k,
+                                          vocab_subtoken, vocab_nodes, vocab_target, device=device,
+                                          shuffle=False)
 
     model_args = {
         'input_size_subtoken': vocab_size_subtoken,
@@ -149,7 +153,7 @@ if __name__ == '__main__':
         'device': device
     }
 
-    model = EncoderDecoder_with_Attention(**model_args).to(device)
+    model = Commit2Seq(**model_args).to(device)
 
     # optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov = nesterov)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -158,7 +162,6 @@ if __name__ == '__main__':
     fname = exp_dir + save_name
     early_stopping = EarlyStopping(fname, patience, warm_up, verbose=True)
     # ==================================================================================================================
-
 
     # ==================================================================================================================
     #
@@ -178,15 +181,23 @@ if __name__ == '__main__':
         for batch in tqdm(train_dataloader,
                           total=train_dataloader.num_examples // train_dataloader.batch_size + 1,
                           desc='TRAIN'):
-            batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
-            max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
-
+            print()
+            # batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
+            # max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
+            batch_S_del, batch_N_del, batch_E_del = batch['del_left_leaves'], batch['del_nodes'], batch['del_right_leaves']
+            lengths_N_del, lengths_k_del, index_N_del = batch['lens_del_nodes'], batch['len_k_del'], batch['permutation_index_del']
+            batch_S_add, batch_N_add, batch_E_add = batch['add_left_leaves'], batch['add_nodes'], batch[
+                'add_right_leaves']
+            lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
+                'permutation_index_add']
+            batch_Y = batch['targets']
             loss, gold, pred = compute_loss(
-                batch_S, batch_N, batch_E, batch_Y,
-                lengths_S, lengths_N, lengths_E, lengths_Y,
-                max_length_S, max_length_N, max_length_E, max_length_Y,
-                lengths_k, index_N, model, optimizer,
-                is_train=True
+                batch_S_del, batch_N_del, batch_E_del,
+                lengths_N_del, lengths_k_del, index_N_del,
+                batch_S_add, batch_N_add, batch_E_add,
+                lengths_N_add, lengths_k_add, index_N_add,
+                batch_Y,
+                model, optimizer, is_train=True
             )
 
             train_loss += loss
@@ -197,15 +208,25 @@ if __name__ == '__main__':
         for batch in tqdm(valid_dataloader,
                           total=valid_dataloader.num_examples // valid_dataloader.batch_size + 1,
                           desc='VALID'):
-            batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
-            max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
+            # batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
+            # max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
+            batch_S_del, batch_N_del, batch_E_del = batch['del_left_leaves'], batch['del_nodes'], batch[
+                'del_right_leaves']
+            lengths_N_del, lengths_k_del, index_N_del = batch['lens_del_nodes'], batch['len_k_del'], batch[
+                'permutation_index_del']
+            batch_S_add, batch_N_add, batch_E_add = batch['add_left_leaves'], batch['add_nodes'], batch[
+                'add_right_leaves']
+            lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
+                'permutation_index_add']
+            batch_Y = batch['targets']
 
             loss, gold, pred = compute_loss(
-                batch_S, batch_N, batch_E, batch_Y,
-                lengths_S, lengths_N, lengths_E, lengths_Y,
-                max_length_S, max_length_N, max_length_E, max_length_Y,
-                lengths_k, index_N, model, optimizer,
-                is_train=False
+                batch_S_del, batch_N_del, batch_E_del,
+                lengths_N_del, lengths_k_del, index_N_del,
+                batch_S_add, batch_N_add, batch_E_add,
+                lengths_N_add, lengths_k_add, index_N_add,
+                batch_Y,
+                model, optimizer, is_train=False
             )
 
             valid_loss += loss
@@ -234,39 +255,39 @@ if __name__ == '__main__':
 
         scheduler.step()
     # ==================================================================================================================
-    model = EncoderDecoder_with_Attention(**model_args).to(device)
-
-    fname = exp_dir + save_name
-    ckpt = torch.load(fname)
-    model.load_state_dict(ckpt)
-
-    model.eval()
-    # ==================================================================================================================
-    test_dataloader = DataLoader(TEST_DIR, batch_size, num_k, vocab_subtoken, vocab_nodes, vocab_target, device=device,
-                                 batch_time=batch_time, shuffle=True)
-    refs_list = []
-    hyp_list = []
-
-    for batch in tqdm(test_dataloader,
-                      total=test_dataloader.num_examples // test_dataloader.batch_size + 1,
-                      desc='TEST'):
-        batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
-        target_max_length = batch_Y.size(0)
-        use_teacher_forcing = False
-
-        pred_Y = model(batch_S, batch_N, batch_E, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S,
-                       max_length_N, max_length_E, max_length_Y, lengths_k, index_N, target_max_length, batch_Y,
-                       use_teacher_forcing)
-
-        refs = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()[0]
-        pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()[0]
-
-        refs_list.append(refs)
-        hyp_list.append(pred)
-    print('Tested model : ' + fname)
-
-    test_precision, test_recall, test_f1 = calculate_results(refs_list, hyp_list, vocab_target)
-    print('Test : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))
-
-    test_precision, test_recall, test_f1 = calculate_results_set(refs_list, hyp_list, vocab_target)
-    print('Test(set) : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))
+    # model = EncoderDecoder_with_Attention(**model_args).to(device)
+    #
+    # fname = exp_dir + save_name
+    # ckpt = torch.load(fname)
+    # model.load_state_dict(ckpt)
+    #
+    # model.eval()
+    # # ==================================================================================================================
+    # test_dataloader = DataLoader(TEST_DIR, batch_size, num_k, vocab_subtoken, vocab_nodes, vocab_target, device=device,
+    #                              batch_time=batch_time, shuffle=True)
+    # refs_list = []
+    # hyp_list = []
+    #
+    # for batch in tqdm(test_dataloader,
+    #                   total=test_dataloader.num_examples // test_dataloader.batch_size + 1,
+    #                   desc='TEST'):
+    #     batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
+    #     target_max_length = batch_Y.size(0)
+    #     use_teacher_forcing = False
+    #
+    #     pred_Y = model(batch_S, batch_N, batch_E, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S,
+    #                    max_length_N, max_length_E, max_length_Y, lengths_k, index_N, target_max_length, batch_Y,
+    #                    use_teacher_forcing)
+    #
+    #     refs = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()[0]
+    #     pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()[0]
+    #
+    #     refs_list.append(refs)
+    #     hyp_list.append(pred)
+    # print('Tested model : ' + fname)
+    #
+    # test_precision, test_recall, test_f1 = calculate_results(refs_list, hyp_list, vocab_target)
+    # print('Test : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))
+    #
+    # test_precision, test_recall, test_f1 = calculate_results_set(refs_list, hyp_list, vocab_target)
+    # print('Test(set) : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import List
 
 import numpy as np
@@ -10,6 +11,31 @@ import random
 from sklearn.utils import shuffle
 
 from .utils import pad_seq, sentence_to_ids
+
+# @dataclass
+# class BatchTwoInput:
+#     return {
+#         'del_left_leaves': tensor_del_left_l,
+#         'del_nodes': tensor_del_nodes,
+#         'del_right_leaves': tensor_del_right_l,
+#         'add_left_leaves': tensor_add_left_l,
+#         'add_nodes': tensor_add_nodes,
+#         'add_right_leaves': tensor_add_right_l,
+#         'targets': tensor_targets,
+#
+#         'lens_del_left_leaves': lens_b_del_left_l,
+#         'lens_del_nodes': lens_b_del_nodes,
+#         'lens_del_right_leaves': lens_b_del_right_l,
+#         'lens_add_left_leaves': lens_b_add_left_l,
+#         'lens_add_nodes': lens_b_add_nodes,
+#         'lens_add_right_leaves': lens_b_add_right_l,
+#         'lens_targets': lengths_b_targets,
+#
+#         'permutation_index_del': perm_index_del,
+#         'permutation_index_add': perm_index_add,
+#         'len_k_del': lengths_del_k,
+#         'len_k_add': lengths_add_k
+#     }
 
 
 class DataLoaderTwoInput(object):
@@ -201,6 +227,8 @@ class DataLoaderTwoInput(object):
                 target, del_paths, add_paths = f.readline().split('\t')
                 target = target.split('|')
                 target = sentence_to_ids(self.vocab_target, target)
+
+                del_paths, add_paths = del_paths.split(), add_paths.split()
 
                 del_left_leaves, del_nodes, del_right_leaves = self.extract_paths_from_line(del_paths)
                 add_left_leaves, add_nodes, add_right_leaves = self.extract_paths_from_line(add_paths)

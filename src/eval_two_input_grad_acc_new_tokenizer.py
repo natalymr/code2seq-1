@@ -2,12 +2,12 @@ import json
 import pickle
 import random
 from datetime import datetime
+from typing import List
 
 import wandb
 
 import torch
 import yaml
-import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
@@ -18,7 +18,8 @@ import sys
 sys.path.append('/home/ubuntu/gcm/')
 
 from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results, calculate_results_set_new_tokenizer
-from commit2seq.code2seq.src.common_vars import PAD, BOS, EOS, UNK, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN, UNK_TOKEN, device
+from commit2seq.code2seq.src.common_vars import PAD, BOS, EOS, UNK, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN, UNK_TOKEN, device, \
+    DumpedResults
 from commit2seq.code2seq.src.ModelTwoInput import Commit2Seq
 from commit2seq.code2seq.src.DataLoaderTwoInputNewTokenizer import DataLoaderTwoInput
 
@@ -60,8 +61,8 @@ def compute_loss(batch_S_del, batch_N_del, batch_E_del,
 
 
 if __name__ == '__main__':
-    wandb.init(project="commit2seq-2-input-new_tokenizer")
-    wandb.watch_called = False
+    # wandb.init(project="commit2seq-2-input-new_tokenizer")
+    # wandb.watch_called = False
     config_file = '../configs/config_commit2seq.yml'
 
     config = yaml.load(open(config_file))
@@ -147,9 +148,9 @@ if __name__ == '__main__':
     mce = nn.CrossEntropyLoss(size_average=False, ignore_index=PAD)
     # ==================================================================================================================
     batch_time = False
-    train_dataloader = DataLoaderTwoInput(TRAIN_DIR, batch_size, num_k,
-                                          vocab_subtoken, vocab_nodes, vocab_target, device=device,
-                                          batch_time=batch_time, shuffle=True)
+    # train_dataloader = DataLoaderTwoInput(TRAIN_DIR, batch_size, num_k,
+    #                                       vocab_subtoken, vocab_nodes, vocab_target, device=device,
+    #                                       batch_time=batch_time, shuffle=True)
     valid_dataloader = DataLoaderTwoInput(VALID_DIR, batch_size, num_k,
                                           vocab_subtoken, vocab_nodes, vocab_target, device=device,
                                           shuffle=False)
@@ -168,7 +169,7 @@ if __name__ == '__main__':
     }
     print(model_args)
     model = Commit2Seq(**model_args).to(device)
-    wandb.watch(model, log="all")
+    # wandb.watch(model, log="all")
 
     # optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov = nesterov)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -184,44 +185,50 @@ if __name__ == '__main__':
     #
     progress_bar = False  # progress bar is visible in progress_bar = False
 
-    
     fname = exp_dir + '/model_2.26.pth'
+    # ckpt = torch.load(fname, map_location=torch.device('cpu'))
     ckpt = torch.load(fname)
     model.load_state_dict(ckpt)
     model.eval()
     # # ==================================================================================================================
-    test_dataloader = DataLoaderTwoInput(TEST_DIR, batch_size, num_k, vocab_subtoken, vocab_nodes, vocab_target, device=device,
-                                  batch_time=batch_time, shuffle=True)
+    # test_dataloader = DataLoaderTwoInput(TEST_DIR, batch_size, num_k, vocab_subtoken, vocab_nodes, vocab_target, device=device,
+    #                               batch_time=batch_time, shuffle=True)
     refs_list = []
     hyp_list = []
-    with open('dumped_mmodel_valid.txt', 'w') as out_f:
-        for batch in tqdm(valid_dataloader,
-                          total=valid_dataloader.num_examples // valid_dataloader.batch_size + 1,
-                          desc='VALID'):
-            # batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
-            # max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
-            batch_S_del, batch_N_del, batch_E_del = batch['del_left_leaves'], batch['del_nodes'], batch[
-                'del_right_leaves']
-            lengths_N_del, lengths_k_del, index_N_del = batch['lens_del_nodes'], batch['len_k_del'], batch[
-                'permutation_index_del']
-            batch_S_add, batch_N_add, batch_E_add = batch['add_left_leaves'], batch['add_nodes'], batch[
-                'add_right_leaves']
-            lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
-                'permutation_index_add']
-            batch_Y = batch['targets']   
-            file_number = batch['file_number']
-            target_max_length = batch_Y.size(0)
-            use_teacher_forcing = False
-    #
-            pred_Y = model(batch_S_del, batch_N_del, batch_E_del, lengths_N_del, lengths_k_del, index_N_del,
-                       batch_S_add, batch_N_add, batch_E_add, lengths_N_add, lengths_k_add, index_N_add,
-                       target_max_length, batch_Y, use_teacher_forcing)    
-            print(pred_Y.shape)#
-            refs = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()[0]
-            pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()[0]
-    #       
-            refs_list.append(refs)
-            hyp_list.append(pred)
+
+    results: List[DumpedResults] = []
+    for batch in tqdm(valid_dataloader,
+                      total=valid_dataloader.num_examples // valid_dataloader.batch_size + 1,
+                      desc='VALID'):
+        # batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
+        # max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
+        batch_S_del, batch_N_del, batch_E_del = batch['del_left_leaves'], batch['del_nodes'], batch[
+            'del_right_leaves']
+        lengths_N_del, lengths_k_del, index_N_del = batch['lens_del_nodes'], batch['len_k_del'], batch[
+            'permutation_index_del']
+        batch_S_add, batch_N_add, batch_E_add = batch['add_left_leaves'], batch['add_nodes'], batch[
+            'add_right_leaves']
+        lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
+            'permutation_index_add']
+        batch_Y = batch['targets']
+        file_number = batch['file_number']
+        target_max_length = batch_Y.size(0)
+        use_teacher_forcing = False
+#
+        pred_Y = model(batch_S_del, batch_N_del, batch_E_del, lengths_N_del, lengths_k_del, index_N_del,
+                   batch_S_add, batch_N_add, batch_E_add, lengths_N_add, lengths_k_add, index_N_add,
+                   target_max_length, batch_Y, use_teacher_forcing)
+        refs = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()[0]
+        pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()[0]
+#
+        refs_list.append(refs)
+        hyp_list.append(pred)
+        results.append(DumpedResults.from_model_output(file_number, pred_Y))
+
+        with open('./dumped_model_valid.txt', 'w') as out_f:
+            out_f.write(json.dumps(results, default=DumpedResults.to_json, indent=2))
+        print(results)
+
     print('Tested model : ' + fname)
     #
     test_precision, test_recall, test_f1, bleu = calculate_results_set_new_tokenizer(refs_list, hyp_list, vocab_target)

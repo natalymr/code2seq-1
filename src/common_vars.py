@@ -35,4 +35,5 @@ class DumpedResults:
 
     @staticmethod
     def to_json(self):
-        return asdict(self)
+        return {'commit_or_file_number': self.commit_or_file_number,
+                'prefixes': self.prefixes}

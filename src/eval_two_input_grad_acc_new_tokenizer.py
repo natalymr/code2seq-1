@@ -197,6 +197,7 @@ if __name__ == '__main__':
     hyp_list = []
 
     results: List[DumpedResults] = []
+    current_file_index = 0
     for batch in tqdm(valid_dataloader,
                       total=valid_dataloader.num_examples // valid_dataloader.batch_size + 1,
                       desc='VALID'):
@@ -225,9 +226,11 @@ if __name__ == '__main__':
         hyp_list.append(pred)
         results.append(DumpedResults.from_model_output(file_number, pred_Y))
 
-        with open('./dumped_model_valid.txt', 'w') as out_f:
-            out_f.write(json.dumps(results, default=DumpedResults.to_json, indent=2))
-        print(results)
+        if len(results) > 4000:
+            with open(f'./dumped_model_valid_{current_file_index}.txt', 'w') as out_f:
+                out_f.write(json.dumps(results, default=DumpedResults.to_json, indent=2))
+            current_file_index += 1
+            results = []
 
     print('Tested model : ' + fname)
     #

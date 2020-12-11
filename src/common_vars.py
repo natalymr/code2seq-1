@@ -37,3 +37,7 @@ class DumpedResults:
     def to_json(self):
         return {'commit_or_file_number': self.commit_or_file_number,
                 'prefixes': self.prefixes}
+
+    def __repr__(self):
+        return f'commit_or_file_number: {self.commit_or_file_number},' \
+               f'prefixes: {self.prefixes}'

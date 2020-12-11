@@ -4,21 +4,24 @@ import pickle
 import random
 from datetime import datetime
 
+import wandb
+
 import torch
 import yaml
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
+from transformers import GPT2Tokenizer
 
 
 import sys
 sys.path.append('/home/ubuntu/gcm/')
 
-from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results
+from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results, calculate_results_set_new_tokenizer
 from commit2seq.code2seq.src.common_vars import PAD, BOS, EOS, UNK, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN, UNK_TOKEN, device
 from commit2seq.code2seq.src.ModelTwoInput import Commit2Seq
-from commit2seq.code2seq.src.DataLoaderTwoInput import DataLoaderTwoInput
+from commit2seq.code2seq.src.DataLoaderTwoInputNewTokenizer import DataLoaderTwoInput
 
 
 def masked_cross_entropy(logits, target):
@@ -30,7 +33,7 @@ def compute_loss(batch_S_del, batch_N_del, batch_E_del,
                  batch_S_add, batch_N_add, batch_E_add,
                  lengths_N_add, lengths_k_add, index_N_add,
                  batch_Y, model,
-                 optimizer=None, is_train=True):
+                 optimizer=None, is_train=True, acc_loss=0, iter_number=-1):
     model.train(is_train)
 
     use_teacher_forcing = is_train and (random.random() < teacher_forcing_rate)
@@ -43,17 +46,23 @@ def compute_loss(batch_S_del, batch_N_del, batch_E_del,
     loss = masked_cross_entropy(pred_Y.contiguous(), batch_Y.contiguous())
 
     if is_train:
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if iter_number % 2 == 0:
+            loss = 0.9 * acc_loss + 0.1 * loss
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    else:
+        acc_loss += loss
 
     batch_Y = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()
     pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()
 
-    return loss.item(), batch_Y, pred
+    return loss.item(), batch_Y, pred, acc_loss
 
 
 if __name__ == '__main__':
+    wandb.init(project="commit2seq-2-input-new_tokenizer")
+    wandb.watch_called = False
     config_file = '../configs/config_commit2seq.yml'
 
     config = yaml.load(open(config_file))
@@ -123,14 +132,16 @@ if __name__ == '__main__':
     vocab_subtoken = Vocab(word2id=word2id)
     vocab_nodes = Vocab(word2id=word2id)
     vocab_target = Vocab(word2id=word2id)
+    vocab_target = GPT2Tokenizer.from_pretrained("gpt2")
 
     vocab_subtoken.build_vocab(list(subtoken_to_count.keys()), min_count=0)
     vocab_nodes.build_vocab(list(node_to_count.keys()), min_count=0)
-    vocab_target.build_vocab(list(target_to_count.keys()), min_count=0)
+    # vocab_target.build_vocab(list(target_to_count.keys()), min_count=0)
 
     vocab_size_subtoken = len(vocab_subtoken.id2word)
     vocab_size_nodes = len(vocab_nodes.id2word)
-    vocab_size_target = len(vocab_target.id2word)
+    vocab_size_target = vocab_target.vocab_size
+    print(f'$$$$ = {vocab_size_target}')
 
     num_length_train = num_training_examples
     # ==================================================================================================================
@@ -156,8 +167,9 @@ if __name__ == '__main__':
         'embeddings_dropout': embeddings_dropout,
         'device': device
     }
-
+    print(model_args)
     model = Commit2Seq(**model_args).to(device)
+    wandb.watch(model, log="all")
 
     # optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov = nesterov)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -182,6 +194,8 @@ if __name__ == '__main__':
         valid_hyps = []
 
         # train
+        i = 0
+        acc_loss = 0.
         for batch in tqdm(train_dataloader,
                           total=train_dataloader.num_examples // train_dataloader.batch_size + 1,
                           desc='TRAIN'):
@@ -194,13 +208,14 @@ if __name__ == '__main__':
             lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
                 'permutation_index_add']
             batch_Y = batch['targets']
-            loss, gold, pred = compute_loss(
+            loss, gold, pred, acc_loss = compute_loss(
                 batch_S_del, batch_N_del, batch_E_del,
                 lengths_N_del, lengths_k_del, index_N_del,
                 batch_S_add, batch_N_add, batch_E_add,
                 lengths_N_add, lengths_k_add, index_N_add,
                 batch_Y,
-                model, optimizer, is_train=True
+                model, optimizer,
+                acc_loss=acc_loss, iter_number=i, is_train=True 
             )
 
             train_loss += loss
@@ -223,7 +238,7 @@ if __name__ == '__main__':
                 'permutation_index_add']
             batch_Y = batch['targets']
 
-            loss, gold, pred = compute_loss(
+            loss, gold, pred, _ = compute_loss(
                 batch_S_del, batch_N_del, batch_E_del,
                 lengths_N_del, lengths_k_del, index_N_del,
                 batch_S_add, batch_N_add, batch_E_add,
@@ -240,13 +255,17 @@ if __name__ == '__main__':
         valid_loss = np.sum(valid_loss) / valid_dataloader.num_examples
 
         # F1 etc
-        train_precision, train_recall, train_f1 = calculate_results_set(train_refs, train_hyps, vocab_target)
-        valid_precision, valid_recall, valid_f1 = calculate_results_set(valid_refs, valid_hyps, vocab_target)
-
+        train_precision, train_recall, train_f1, train_bleu = calculate_results_set_new_tokenizer(train_refs, train_hyps, vocab_target)
+        valid_precision, valid_recall, valid_f1, valid_bleu = calculate_results_set_new_tokenizer(valid_refs, valid_hyps, vocab_target)
+        wandb.log({'train_bleu': train_bleu,
+                   'train_loss': train_loss,
+                   'valid_bleu': valid_bleu,
+                   'valid_loss': valid_loss,})
         print()
         print(f'epoch = {epoch}, F1 = {valid_f1}')
         print()
-        early_stopping(valid_f1, model, epoch)
+        early_stopping(valid_bleu, model, epoch)
+        torch.save(model.state_dict(), exp_dir + '/model_{:.2f}.pth'.format(valid_bleu))
         if early_stopping.early_stop:
             print("Early stopping")
             break

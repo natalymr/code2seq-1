@@ -2,12 +2,14 @@ from typing import List
 
 import torch
 from nltk import bleu_score
+from commit2seq.code2seq.src.common_vars import pad_token
+
 
 PAD = 0
 BOS = 1
 EOS = 2
 UNK = 3
-
+pad_token_value = '<|endoftext|>'
 
 special_tokens = [PAD, BOS, EOS, UNK]
 
@@ -60,6 +62,87 @@ def get_nltk_bleu_score_for_corpora(refs: List[List[str]], preds: List[List[str]
     return total_bleu / len(refs)
 
 
+
+def calculate_results_set_aurora(refs, preds, target_vocab=None):
+    #calc precision, recall and F1
+    #same as https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L239
+    print('utils')
+    filterd_preds = [pred[:pred.index(EOS)] if EOS in pred else pred for pred in preds]
+
+    filterd_preds = [list(set(pred)) for pred in filterd_preds]
+    if target_vocab is not None:
+        preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
+        print(f'BLEU = {bleu_score}')
+        with open('top1000_results_val.txt', 'w') as results_f:
+            for ref, pred in zip(refs, preds_in_words):
+                results_f.write(f'{ref}\t{" ".join(pred)}\n')
+        print(f'Target = {refs[:10]}')
+        print(f'Predicted = {preds_in_words[:10]}')
+
+
+def calculate_results_set_new_tokenizer(refs, preds, target_vocab=None):
+    #calc precision, recall and F1
+    #same as https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L239
+
+    filterd_refs = refs#[ref[:ref.index(tokenizer.eos_token)] for ref in refs]
+    filterd_preds = preds#[pred[:pred.index(tokenizer.eos_token)] if EOS in pred else pred for pred in preds]
+
+#    filterd_refs = [list(set(ref)) for ref in filterd_refs]
+#    filterd_preds = [list(set(pred)) for pred in filterd_preds]
+    if target_vocab is not None:
+
+        #refs_in_words = [" ".join(target_vocab.convert_ids_to_tokens(ref)).replace('\u0120', '').split() for ref in refs]
+        #preds_in_words = [" ".join(target_vocab.convert_ids_to_tokens(pred)).replace('\u0120', '').split() for pred in preds]
+#        print(preds)
+        #refs_in_words  = [target_vocab.convert_tokens_to_string(target_vocab.convert_ids_to_tokens(ref)).replace(pad_token_value, '').split() for ref in refs]
+        #preds_in_words = [target_vocab.convert_tokens_to_string(target_vocab.convert_ids_to_tokens(pred)).replace(pad_token_value, '').split() for pred in preds]
+        refs_in_words = [target_vocab.decode(ref).split() for ref in refs]
+        preds_in_words = [target_vocab.decode(pred).split() for pred in preds]
+
+        #refs_in_words = [[target_vocab.convert_ids_to_tokens(r).encode('utf-8') for r in ref if r not in special_tokens] for ref in refs]
+        #preds_in_words = [[target_vocab.convert_ids_to_tokens(p).encode('utf-8') for p in pred if p not in special_tokens] for pred in preds]
+        bleu_score = get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)
+        print(f'BLEU = {bleu_score}')
+        with open('new_tokenizer_results.txt', 'w') as results_f:
+            for ref, pred in zip(refs_in_words, preds_in_words):
+                results_f.write(f'{" ".join(ref).replace("<|endoftext|>", "")}\n{" ".join(pred).replace("<|endoftext|>", "")}\n\n')
+        #print(f'Target = {refs_in_words[:8]}')
+        #print(f'Predicted = {preds_in_words[:8]}')
+
+    true_positive, false_positive, false_negative = 0, 0, 0
+
+    for filterd_pred, filterd_ref in zip(filterd_preds, filterd_refs):
+
+        for fp in filterd_pred:
+            if fp in filterd_ref:
+                true_positive += 1
+            else:
+                false_positive += 1
+
+        for fr in filterd_ref:
+            if not fr in filterd_pred:
+                false_negative += 1
+
+    # https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L282
+    if true_positive + false_positive > 0:
+        precision = true_positive / (true_positive + false_positive)
+    else:
+        precision = 0
+
+    if true_positive + false_negative > 0:
+        recall = true_positive / (true_positive + false_negative)
+    else:
+        recall = 0
+
+    if precision + recall > 0:
+        f1 = 2 * precision * recall / (precision + recall)
+    else:
+        f1 = 0
+
+    return precision, recall, f1, bleu_score
+
+
+
 def calculate_results_set(refs, preds, target_vocab=None):
     #calc precision, recall and F1
     #same as https://github.com/tech-srl/code2seq/blob/ec0ae309efba815a6ee8af88301479888b20daa9/model.py#L239
@@ -70,11 +153,16 @@ def calculate_results_set(refs, preds, target_vocab=None):
     filterd_refs = [list(set(ref)) for ref in filterd_refs]
     filterd_preds = [list(set(pred)) for pred in filterd_preds]
     if target_vocab is not None:
+                
         refs_in_words = [[target_vocab.id2word[r] for r in ref if r not in special_tokens] for ref in refs]
         preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
-        print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
-        print(f'Target = {[[target_vocab.id2word[r] for r in ref] for ref in refs[:10]]}')
-        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds[:10]]}')
+        bleu_score = get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)
+        print(f'BLEU = {bleu_score}')
+#        with open('aurora_results.txt', 'w') as results_f:
+#            for ref, pred in zip(refs_in_words, preds_in_words):
+#                results_f.write(f'{ref}\t{pred}\n')
+        print(f'Target = {refs_in_words[:10]}')
+        print(f'Predicted = {preds_in_words[:10]}')
     
     true_positive, false_positive, false_negative = 0, 0, 0
 
@@ -106,7 +194,7 @@ def calculate_results_set(refs, preds, target_vocab=None):
     else:
         f1 = 0
     
-    return precision, recall, f1
+    return precision, recall, f1, bleu_score
 
 
 
@@ -120,8 +208,8 @@ def calculate_results(refs, preds, target_vocab=None):
         refs_in_words = [[target_vocab.id2word[r] for r in ref if r not in special_tokens] for ref in refs]
         preds_in_words = [[target_vocab.id2word[p] for p in pred if p not in special_tokens] for pred in preds]
         print(f'BLEU = {get_nltk_bleu_score_for_corpora(refs_in_words, preds_in_words)}')
-        print(f'Target = {[[target_vocab.id2word[r] for r in ref ] for ref in refs[:10]]}')
-        print(f'Predicted = {[[target_vocab.id2word[p] for p in pred] for pred in preds[:10]]}')
+        print(f'Target = {refs_in_words[:10]}')
+        print(f'Predicted = {preds_in_words[:10]}')
 
     true_positive, false_positive, false_negative = 0, 0, 0
 
@@ -207,6 +295,12 @@ def pad_seq(seq, max_length):
     # pad tail of sequence to extend sequence length up to max_length
     res = seq + [PAD for i in range(max_length - len(seq))]
     return res 
+
+
+def pad_seq_new_tokenizer(seq, max_length):
+    # pad tail of sequence to extend sequence length up to max_length
+    res = seq + [pad_token for i in range(max_length - len(seq))]
+    return res
 
 
 def calc_bleu(refs, hyps):

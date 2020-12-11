@@ -1,8 +1,9 @@
-import logging
-import os
+import json
 import pickle
 import random
 from datetime import datetime
+
+import wandb
 
 import torch
 import yaml
@@ -10,15 +11,16 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
+from transformers import GPT2Tokenizer
 
 
 import sys
 sys.path.append('/home/ubuntu/gcm/')
 
-from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results
+from commit2seq.code2seq.src.utils import Vocab, EarlyStopping, calculate_results_set, calculate_results, calculate_results_set_new_tokenizer
 from commit2seq.code2seq.src.common_vars import PAD, BOS, EOS, UNK, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN, UNK_TOKEN, device
 from commit2seq.code2seq.src.ModelTwoInput import Commit2Seq
-from commit2seq.code2seq.src.DataLoaderTwoInput import DataLoaderTwoInput
+from commit2seq.code2seq.src.DataLoaderTwoInputNewTokenizer import DataLoaderTwoInput
 
 
 def masked_cross_entropy(logits, target):
@@ -30,7 +32,7 @@ def compute_loss(batch_S_del, batch_N_del, batch_E_del,
                  batch_S_add, batch_N_add, batch_E_add,
                  lengths_N_add, lengths_k_add, index_N_add,
                  batch_Y, model,
-                 optimizer=None, is_train=True):
+                 optimizer=None, is_train=True, acc_loss=0, iter_number=-1):
     model.train(is_train)
 
     use_teacher_forcing = is_train and (random.random() < teacher_forcing_rate)
@@ -43,17 +45,23 @@ def compute_loss(batch_S_del, batch_N_del, batch_E_del,
     loss = masked_cross_entropy(pred_Y.contiguous(), batch_Y.contiguous())
 
     if is_train:
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if iter_number % 2 == 0:
+            loss = 0.9 * acc_loss + 0.1 * loss
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    else:
+        acc_loss += loss
 
     batch_Y = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()
     pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()
 
-    return loss.item(), batch_Y, pred
+    return loss.item(), batch_Y, pred, acc_loss
 
 
 if __name__ == '__main__':
+    wandb.init(project="commit2seq-2-input-new_tokenizer")
+    wandb.watch_called = False
     config_file = '../configs/config_commit2seq.yml'
 
     config = yaml.load(open(config_file))
@@ -97,12 +105,12 @@ if __name__ == '__main__':
 
     run_id = datetime.now().strftime('%Y-%m-%d--%H-%M-%S')
     log_file = '../logs/' + run_id + '.log'
-    exp_dir = '../runs/' + run_id
+    exp_dir = '../runs/' + "2020-11-16--09-34-05"
 
-    os.mkdir(exp_dir)
+#    os.mkdir(exp_dir)
 
-    logging.basicConfig(format='%(asctime)s | %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', filename=log_file,
-                        level=logging.DEBUG)
+    #logging.basicConfig(format='%(asctime)s | %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', filename=log_file,
+    #                    level=logging.DEBUG)
     # ==================================================================================================================
     # load vocab dict
     with open(DICT_FILE, 'rb') as file:
@@ -123,14 +131,16 @@ if __name__ == '__main__':
     vocab_subtoken = Vocab(word2id=word2id)
     vocab_nodes = Vocab(word2id=word2id)
     vocab_target = Vocab(word2id=word2id)
+    vocab_target = GPT2Tokenizer.from_pretrained("gpt2")
 
     vocab_subtoken.build_vocab(list(subtoken_to_count.keys()), min_count=0)
     vocab_nodes.build_vocab(list(node_to_count.keys()), min_count=0)
-    vocab_target.build_vocab(list(target_to_count.keys()), min_count=0)
+    # vocab_target.build_vocab(list(target_to_count.keys()), min_count=0)
 
     vocab_size_subtoken = len(vocab_subtoken.id2word)
     vocab_size_nodes = len(vocab_nodes.id2word)
-    vocab_size_target = len(vocab_target.id2word)
+    vocab_size_target = vocab_target.vocab_size
+    print(f'$$$$ = {vocab_size_target}')
 
     num_length_train = num_training_examples
     # ==================================================================================================================
@@ -156,8 +166,9 @@ if __name__ == '__main__':
         'embeddings_dropout': embeddings_dropout,
         'device': device
     }
-
+    print(model_args)
     model = Commit2Seq(**model_args).to(device)
+    wandb.watch(model, log="all")
 
     # optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov = nesterov)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -173,41 +184,17 @@ if __name__ == '__main__':
     #
     progress_bar = False  # progress bar is visible in progress_bar = False
 
-    for epoch in range(1, num_epochs + 1):
-        train_loss = 0.
-        train_refs = []
-        train_hyps = []
-        valid_loss = 0.
-        valid_refs = []
-        valid_hyps = []
-
-        # train
-        for batch in tqdm(train_dataloader,
-                          total=train_dataloader.num_examples // train_dataloader.batch_size + 1,
-                          desc='TRAIN'):
-            # batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, \
-            # max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
-            batch_S_del, batch_N_del, batch_E_del = batch['del_left_leaves'], batch['del_nodes'], batch['del_right_leaves']
-            lengths_N_del, lengths_k_del, index_N_del = batch['lens_del_nodes'], batch['len_k_del'], batch['permutation_index_del']
-            batch_S_add, batch_N_add, batch_E_add = batch['add_left_leaves'], batch['add_nodes'], batch[
-                'add_right_leaves']
-            lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
-                'permutation_index_add']
-            batch_Y = batch['targets']
-            loss, gold, pred = compute_loss(
-                batch_S_del, batch_N_del, batch_E_del,
-                lengths_N_del, lengths_k_del, index_N_del,
-                batch_S_add, batch_N_add, batch_E_add,
-                lengths_N_add, lengths_k_add, index_N_add,
-                batch_Y,
-                model, optimizer, is_train=True
-            )
-
-            train_loss += loss
-            train_refs += gold
-            train_hyps += pred
-
-        # valid
+    
+    fname = exp_dir + '/model_2.26.pth'
+    ckpt = torch.load(fname)
+    model.load_state_dict(ckpt)
+    model.eval()
+    # # ==================================================================================================================
+    test_dataloader = DataLoaderTwoInput(TEST_DIR, batch_size, num_k, vocab_subtoken, vocab_nodes, vocab_target, device=device,
+                                  batch_time=batch_time, shuffle=True)
+    refs_list = []
+    hyp_list = []
+    with open('dumped_mmodel_valid.txt', 'w') as out_f:
         for batch in tqdm(valid_dataloader,
                           total=valid_dataloader.num_examples // valid_dataloader.batch_size + 1,
                           desc='VALID'):
@@ -221,76 +208,22 @@ if __name__ == '__main__':
                 'add_right_leaves']
             lengths_N_add, lengths_k_add, index_N_add = batch['lens_add_nodes'], batch['len_k_add'], batch[
                 'permutation_index_add']
-            batch_Y = batch['targets']
-
-            loss, gold, pred = compute_loss(
-                batch_S_del, batch_N_del, batch_E_del,
-                lengths_N_del, lengths_k_del, index_N_del,
-                batch_S_add, batch_N_add, batch_E_add,
-                lengths_N_add, lengths_k_add, index_N_add,
-                batch_Y,
-                model, optimizer, is_train=False
-            )
-
-            valid_loss += loss
-            valid_refs += gold
-            valid_hyps += pred
-
-        train_loss = np.sum(train_loss) / train_dataloader.num_examples
-        valid_loss = np.sum(valid_loss) / valid_dataloader.num_examples
-
-        # F1 etc
-        train_precision, train_recall, train_f1 = calculate_results_set(train_refs, train_hyps, vocab_target)
-        valid_precision, valid_recall, valid_f1 = calculate_results_set(valid_refs, valid_hyps, vocab_target)
-
-        print()
-        print(f'epoch = {epoch}, F1 = {valid_f1}')
-        print()
-        early_stopping(valid_f1, model, epoch)
-        if early_stopping.early_stop:
-            print("Early stopping")
-            break
-
-        #     msgr.print_msg('Epoch {}: train_loss: {:5.2f}  train_f1: {:2.4f}  valid_loss: {:5.2f}  valid_f1: {:2.4f}'.format(
-        #             epoch, train_loss, train_f1, valid_loss, valid_f1))
-
-        print('-' * 80)
-
-        scheduler.step()
-    # ==================================================================================================================
-    # model = EncoderDecoder_with_Attention(**model_args).to(device)
+            batch_Y = batch['targets']   
+            file_number = batch['file_number']
+            target_max_length = batch_Y.size(0)
+            use_teacher_forcing = False
     #
-    # fname = exp_dir + save_name
-    # ckpt = torch.load(fname)
-    # model.load_state_dict(ckpt)
+            pred_Y = model(batch_S_del, batch_N_del, batch_E_del, lengths_N_del, lengths_k_del, index_N_del,
+                       batch_S_add, batch_N_add, batch_E_add, lengths_N_add, lengths_k_add, index_N_add,
+                       target_max_length, batch_Y, use_teacher_forcing)    
+            print(pred_Y.shape)#
+            refs = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()[0]
+            pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()[0]
+    #       
+            refs_list.append(refs)
+            hyp_list.append(pred)
+    print('Tested model : ' + fname)
     #
-    # model.eval()
-    # # ==================================================================================================================
-    # test_dataloader = DataLoader(TEST_DIR, batch_size, num_k, vocab_subtoken, vocab_nodes, vocab_target, device=device,
-    #                              batch_time=batch_time, shuffle=True)
-    # refs_list = []
-    # hyp_list = []
-    #
-    # for batch in tqdm(test_dataloader,
-    #                   total=test_dataloader.num_examples // test_dataloader.batch_size + 1,
-    #                   desc='TEST'):
-    #     batch_S, batch_N, batch_E, batch_Y, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S, max_length_N, max_length_E, max_length_Y, lengths_k, index_N = batch
-    #     target_max_length = batch_Y.size(0)
-    #     use_teacher_forcing = False
-    #
-    #     pred_Y = model(batch_S, batch_N, batch_E, lengths_S, lengths_N, lengths_E, lengths_Y, max_length_S,
-    #                    max_length_N, max_length_E, max_length_Y, lengths_k, index_N, target_max_length, batch_Y,
-    #                    use_teacher_forcing)
-    #
-    #     refs = batch_Y.transpose(0, 1).contiguous().data.cpu().tolist()[0]
-    #     pred = pred_Y.max(dim=-1)[1].data.cpu().numpy().T.tolist()[0]
-    #
-    #     refs_list.append(refs)
-    #     hyp_list.append(pred)
-    # print('Tested model : ' + fname)
-    #
-    # test_precision, test_recall, test_f1 = calculate_results(refs_list, hyp_list, vocab_target)
-    # print('Test : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))
-    #
-    # test_precision, test_recall, test_f1 = calculate_results_set(refs_list, hyp_list, vocab_target)
-    # print('Test(set) : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}'.format(test_precision, test_recall, test_f1))
+    test_precision, test_recall, test_f1, bleu = calculate_results_set_new_tokenizer(refs_list, hyp_list, vocab_target)
+    print('Test : precision {:1.5f}, recall {:1.5f}, f1 {:1.5f}, bleu {:.2f}'.format(test_precision, test_recall, test_f1, bleu))
+    

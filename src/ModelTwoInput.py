@@ -1,6 +1,6 @@
 import torch
 from torch import nn, einsum
-from commit2seq.code2seq.src.common_vars import BOS
+from commit2seq.code2seq.src.common_vars import BOS, pad_token
 from commit2seq.code2seq.src.model import Encoder, Decoder
 
 import torch.nn.functional as F
@@ -44,7 +44,8 @@ class Commit2Seq(nn.Module):
         decoder_hidden = (encoder_hidden_del + encoder_hidden_add) / 2
 
         # make initial input for decoder
-        decoder_input = torch.tensor([BOS] * _batch_size, dtype=torch.long, device=self.device)
+        # decoder_input = torch.tensor([BOS] * _batch_size, dtype=torch.long, device=self.device)
+        decoder_input = torch.tensor([pad_token] * _batch_size, dtype=torch.long, device=self.device)
         decoder_input = decoder_input.unsqueeze(0)  # (1, batch_size)
 
         # output holder

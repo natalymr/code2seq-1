@@ -1,33 +1,33 @@
 data:
-  home: /Users/natalia.murycheva/PycharmProjects/gitCommitMessageCollector/commit2seq/code2seq/data/java-small
-  dict: /java-small.dict.c2s
-  train: /train_two_input
-  valid: /train_two_input
-  test: /train_two_input
+  home: /home/ubuntu/gcm/commit2seq/code2seq/data/two_input
+  dict: /two_input.dict.c2s
+  train: /train
+  valid: /test
+  test: /val
 
 
 training:
-  batch_size: 2
+  batch_size: 1
   num_epochs: 30
-  lr: 0.001
-  teacher_forcing_rate: 0.4
+  lr: 0.01
+  teacher_forcing_rate: 0.5
   nesterov: True
   weight_decay: 0.01
   momentum: 0.95
   decay_ratio: 0.95
   save_name: /model.pth
   warm_up: 1
-  patience: 30
+  patience: 20
   
   
 model:
-  token_size: 128
-  hidden_size: 64
-  num_layers: 2
+  token_size: 100
+  hidden_size: 100
+  num_layers: 1
   bidirectional: True
   rnn_dropout: 0.5
   embeddings_dropout: 0.3
-  num_k : 200
+  num_k : 400
 
 etc:
   info_prefix: code2seq

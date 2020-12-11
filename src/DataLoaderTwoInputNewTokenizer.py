@@ -10,7 +10,7 @@ import random
 
 from sklearn.utils import shuffle
 
-from .utils import pad_seq, sentence_to_ids
+from .utils import pad_seq, pad_seq_new_tokenizer, sentence_to_ids
 
 # @dataclass
 # class BatchTwoInput:
@@ -63,6 +63,7 @@ class DataLoaderTwoInput(object):
         self.vocab_subtoken = vocab_subtoken
         self.vocab_nodes = vocab_nodes
         self.vocab_target = vocab_target
+        self.eos_token = self.vocab_target(self.vocab_target.eos_token)['input_ids'][0]
 
         self.index = 0
         self.pointer = np.array(range(self.num_examples))
@@ -90,7 +91,7 @@ class DataLoaderTwoInput(object):
         # flattening (batch_size, k, l) to (batch_size * k, l), this is useful to make torch.tensor
         lengths = [len(sub_list) for sub_list in data]
         max_length = max(lengths)
-        padded_data = [pad_seq(sub_list, max_length) for sub_list in data]
+        padded_data = [pad_seq_new_tokenizer(sub_list, max_length) for sub_list in data]
         return padded_data, lengths, max_length
 
     def __next__(self):
@@ -104,7 +105,7 @@ class DataLoaderTwoInput(object):
 
         ids = self.pointer[self.index: self.index + self.batch_size]
         b_del_left_leaves, b_del_nodes, b_del_right_leaves, \
-            b_add_left_leaves, b_add_nodes, b_add_right_leaves, b_targets, commit = self.read_batch(ids)
+            b_add_left_leaves, b_add_nodes, b_add_right_leaves, b_targets, file_number = self.read_batch(ids)
 
         # length_k : (batch_size, k) для каждого в батче смотрим, сколько было путей для каждой функции
         lengths_del_k = [len(cur_line_paths) for cur_line_paths in b_del_nodes]
@@ -200,7 +201,7 @@ class DataLoaderTwoInput(object):
             'len_k_del': lengths_del_k,
             'len_k_add': lengths_add_k,
 
-            'commit': commit
+            'file_number': file_number
         }
 
     def sort_by_len(self, lens_of_paths, permutation_index, nodes, right_leaves, left_leaves):
@@ -230,8 +231,14 @@ class DataLoaderTwoInput(object):
             with open(path, 'r') as f:
                 target, del_paths, add_paths = f.readline().split('\t')
                 target = target.split('|')
+                target = " ".join(target)
+#                print(target)
                 # target, commit = [target[0]], target[0]
-                target = sentence_to_ids(self.vocab_target, target)
+                target = self.vocab_target(target)['input_ids']
+                target.append(self.eos_token)
+#                print(target)                
+#                print(self.vocab_target.convert_tokens_to_string(self.vocab_target.convert_ids_to_tokens(target)))#.encode('utf-8'))#.decode('ascii'))
+#sentence_to_ids(self.vocab_target, target)
 
                 del_paths, add_paths = del_paths.split(), add_paths.split()
 
